@@ -46,90 +46,148 @@
 //#define LIBMSR_DEBUG     1
 static int core_fd[NUM_DEVS];
 
+/*********************************************************************************
+*
+* Helper functions for init_msr().
+*
+*********************************************************************************/
+
+static int 
+stat_check(char* filename, struct stat *statbuf){
+
+	int retVal = stat(filename, statbuf);
+
+	if (retVal == -1) {
+		snprintf(filename, 1024, "%s %s::%d  stat failed on %s.\n", 
+			getenv("HOSTNAME"),__FILE__, __LINE__, filename);
+		perror(filename);
+	}	
+	return retVal;
+}
+
+static int 
+rw_check(char* filename, struct stat *statbuf){
+
+	if( !(statbuf->st_mode & S_IRUSR) || !(statbuf->st_mode & S_IWUSR) ){
+		snprintf(filename, 1024, "%s %s::%d  Read/write permissions denied on %s.\n", 
+			getenv("HOSTNAME"),__FILE__, __LINE__, filename);
+		perror(filename);
+		return -1;
+	}
+	return 0;
+}
+
+static int 
+safe_open(char* filename, int close_on_success){
+	int fd =  open( filename, O_RDWR );
+	if(fd == -1){
+		snprintf(filename, 1024, "%s %s::%d  Error opening %s.\n", 
+			getenv("HOSTNAME"),__FILE__, __LINE__, filename);
+		perror(filename);
+	}else if (close_on_success){
+		close( fd );	
+	}
+	return fd;
+}
+
+/*********************************************************************************
+*
+* init_msr()
+*
+*********************************************************************************/
 int
 init_msr(){
 	int dev_idx;
 	char filename[1025];
-	struct stat statbuf;
+	char* filename_base[4] = {"msr_dev", "msr_safe", "msr", 0};
 	static int initialized = 0;
-	int retVal;
-	int whichKernel=0; //msr_safe=0, msr=1
+	int fn_idx=0, skip_remainder=0;
+	struct stat statbuf;
 
-#ifdef LIBMSR_DEBUG
-	fprintf(stderr, "%s Initializing %d device(s).\n", getenv("HOSTNAME"),NUM_DEVS);
-#endif
 	if( initialized ){
 		return 0;
 	}
 
-	for (dev_idx=0; dev_idx < NUM_DEVS; dev_idx++){
+	fprintf(stderr, "%s Initializing %d device(s).\n", getenv("HOSTNAME"),NUM_DEVS);
 
-		snprintf(filename, 1024, "/dev/cpu/%d/msr_safe", dev_idx);
-		retVal = stat(filename, &statbuf);
+	/*	Determining initialization errors has been problematic.  This algorithm
+	 *	requires that all NUM_DEVS msr* files be present, writable and openable.
+	 *	If any single file has a problem, the algorithm iterates to the next
+	 *	filename_base and starts over.  We look for "msr_dev" files first, then 
+	 *	"msr_safe" files provided by the msr-safe kernel module, and finally the
+	 *	"msr" files provided by the stock msr kernel module.
+	 *
+	 *	Note:  if using the stock msr module, recent kernels do a capabilities
+	 *	check.  Running as a non-root account without the appropriate cababilites
+	 *	also leads to an error.
+	 *
+	 * 	Note:  we assume a working configuration provides rw permissions on the
+	 * 	msr files.  There may be use cases where a read-only initialization may
+	 * 	be useful, but we do not do that here (yet).
+	 *
+	 * 	Note:  we might also want to allow the user to specify a particular 
+	 * 	filename_base.  That also is not handled (yet).
+	 */
 
-		if (retVal == -1) {
-			/*
-			snprintf(filename, 1024, "%s %s::%d  Error: stat failed on /dev/cpu/%d/msr_safe, check if msr module is loaded\n", 
-				getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-			*/
-			whichKernel =1;
-			break; 
-		}	
-			
-		if(!(statbuf.st_mode & S_IRUSR) || !(statbuf.st_mode & S_IWUSR)){
-			/*
-			snprintf(filename, 1024, "%s %s::%d  Read/write permissions denied on /dev/cpu/%d/msr_safe\n", 
-				getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-			*/	
-			whichKernel =1;
-			break;
-		}
-	 
-		core_fd[dev_idx] = open( filename, O_RDWR );
+	do{	// iterate over filenames until we find one that works.
 
-		if(core_fd[dev_idx] == -1){
-			/*
-			snprintf(filename, 1024, "%s %s::%d  Error opening /dev/cpu/%d/msr_safe, check if msr module is loaded. \n", 
-				getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-			perror(filename);
-			*/
-			whichKernel =1;
-			break;
-		}
-	}
-	if (whichKernel == 1){
+		skip_remainder = 0;	// Reset.
+
 		for (dev_idx=0; dev_idx < NUM_DEVS; dev_idx++){
-	
-			snprintf(filename, 1024, "/dev/cpu/%d/msr", dev_idx);
-			retVal = stat(filename, &statbuf);
-	
-			if (retVal == -1) {
-				snprintf(filename, 1024, "%s %s::%d  Error: stat failed on /dev/cpu/%d/msr, check if msr module is loaded\n", 
-					getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-				return -1; 
-			}	
-				
-			if(!(statbuf.st_mode & S_IRUSR) || !(statbuf.st_mode & S_IWUSR)){
-				snprintf(filename, 1024, "%s %s::%d  Read/write permissions denied on /dev/cpu/%d/msr\n", 
-					getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-				
-				return -1;
+
+			snprintf(filename, 1024, "/dev/cpu/%d/%s", dev_idx, filename_base[fn_idx]);
+
+			skip_remainder = stat_check(filename, &statbuf);
+			
+			if( !skip_remainder ) {
+				skip_remainder = rw_check(filename, &statbuf);
 			}
-		 
-			core_fd[dev_idx] = open( filename, O_RDWR );
-	
-			if(core_fd[dev_idx] == -1){
-				snprintf(filename, 1024, "%s %s::%d  Error opening /dev/cpu/%d/msr, check if msr module is loaded. \n", 
-					getenv("HOSTNAME"),__FILE__, __LINE__, dev_idx);
-				perror(filename);
-				return -1;
+
+			if( !skip_remainder ){
+				skip_remainder = (safe_open(filename, 1) == -1); // close on success 
+			}
+
+			if(skip_remainder){
+				break;	// break out of the for loop, as we found one that didn't work.
 			}
 		}
+
+		if(skip_remainder){
+			fn_idx++;
+			continue;	// continue to the next potential filename_base
+		}else{
+			break;		// we have a winner...
+		}
+	}while( filename_base[fn_idx] );
+
+	if(skip_remainder){		
+		// If we have gotten to this point there is no particular reason to continue.
+		fprintf(stderr, "No correctly-configured msr files found.  Exiting.\n");
+		exit(-1);
+	}else{
+
+		// Finally, now that we've passed the sanity checks, initialize the file descriptors.
+		for (dev_idx=0; dev_idx < NUM_DEVS; dev_idx++){
+
+			snprintf(filename, 1024, "/dev/cpu/%d/%s", dev_idx, filename_base[fn_idx]);
+			core_fd[dev_idx] = safe_open( filename, 0 );  // keep open on success
+
+			if(core_fd[dev_idx] == -1){
+				// This open ostensibly worked just moments ago.  Should never get here.
+				fprintf(stderr, "%s passed its open check and subsequently failed to open.  Exiting.", filename);
+				exit(-1);
+			}
+		}
+		initialized = 1;
 	}
-	initialized = 1;
 	return 0;
 }
 
+/*********************************************************************************
+*
+* finalize_msr()
+*
+*********************************************************************************/
 void 
 finalize_msr(){
 	int dev_idx, rc;
@@ -148,6 +206,28 @@ finalize_msr(){
 	}
 }
 
+/*********************************************************************************
+ *
+ * 
+ * write_msr_by_coord( int socket, int core, int thread, off_t msr, uint64_t  val );
+ * read_msr_by_coord(  int socket, int core, int thread, off_t msr, uint64_t *val );
+ *
+ * write_all_sockets(   off_t msr, uint64_t  val );
+ * write_all_cores(     off_t msr, uint64_t  val );
+ * write_all_threads(   off_t msr, uint64_t  val );
+ *
+ * write_all_sockets_v( off_t msr, uint64_t *val );
+ * write_all_cores_v(   off_t msr, uint64_t *val );
+ * write_all_threads_v( off_t msr, uint64_t *val );
+ *
+ * read_all_sockets(    off_t msr, uint64_t *val );
+ * read_all_cores(      off_t msr, uint64_t *val );
+ * read_all_threads(    off_t msr, uint64_t *val );
+ *
+ * read_msr_by_idx(  int dev_idx, off_t msr, uint64_t *val );
+ * write_msr_by_idx( int dev_idx, off_t msr, uint64_t  val );
+ *
+ *********************************************************************************/
 void
 write_msr_by_coord( int socket, int core, int thread, off_t msr, uint64_t  val ){
 #ifdef LIBMSR_DEBUG
