@@ -29,7 +29,7 @@
 CFLAGS=-fPIC -Wall -O3 -I../include
 CC=gcc
 
-all: libmsr
+all: gitdir libmsr
 
 libmsr: msr_core.o msr_rapl.o msr_thermal.o msr_clocks.o cpuid.o msr_counters.o profile.o msr_misc.o signalCombined.o msr_turbo.o
 	mpicc -DPIC -fPIC -g -shared  -Wl,-soname,libmsr.so -o ../lib/libmsr.so $^
@@ -46,6 +46,10 @@ signalCombined.o: 	Makefile signalCombined.c ../include/signalCombined.h
 msr_turbo.o:		Makefile msr_turbo.c	 ../include/msr_turbo.h
 clean:
 	rm -f *.o ../lib/*.so 
+
+# git does not track empty directories, so we will make one here.
+gitdir:
+	mkdir -p ../lib
 
 
 	
