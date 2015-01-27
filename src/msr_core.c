@@ -1,6 +1,6 @@
 /* msr_core.c
  *
- * Copyright (c) 2011, 2012, 2013, 2014 by Lawrence Livermore National Security, LLC. LLNL-CODE-645430 
+ * Copyright (c) 2011, 2012, 2013, 2014, 2015 by Lawrence Livermore National Security, LLC. LLNL-CODE-645430 
  * Produced at the Lawrence Livermore National Laboratory.
  * Written by Kathleen Shoga and Barry Rountree (shoga1|rountree@llnl.gov).
  * All rights reserved.
